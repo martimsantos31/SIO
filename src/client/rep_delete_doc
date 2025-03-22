@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+from utils.utils import send_encrypted_message, decrypt_message, send_authed_message
+import client
+
+
+def main():
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        document_name = args["arg1"]
+
+        with open(session_file, "r") as f:
+            session = json.load(f)
+
+        session_id = session.get("session_id")
+        organization = session.get("org")
+        shared_key = session.get("shared_key")
+        salt = session.get("salt")
+
+        if not organization or not session_id:
+            raise ValueError("Organization or session_id not found in session file.")
+
+        doc_to_delete = {
+            "organization": organization,
+            "document_name": document_name,
+            "session_file": session,
+        }
+
+        url = f"http://{state['REP_ADDRESS']}/doc/delete_doc"
+        response = send_authed_message(
+            doc_to_delete, session, url, "POST"
+        )
+
+        
+
+        if response.json().get("error", None) != None:
+            print("There was an error retriving the documents: ", response.json().get("error"))
+            return 1
+
+        print("Document deleted successfully")
+        return 0
+
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    ports:
+      - 5005:5005
+    volumes:
+      - ./repository/:/api-flask/repository/
+      - ./utils/:/api-flask/utils/
+    command: gunicorn -w 4 -b 0.0.0.0:5005 repository.app:app --reload --reload-extra-file utils/ --reload-extra-file repository/

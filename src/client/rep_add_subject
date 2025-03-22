@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from utils.utils import send_authed_message, decrypt_message
+
+import json
+import requests
+import client
+import os
+
+
+def main():
+    """
+    Implements the rep_add_subject command to add a subject to an organization.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        session_file_path = os.path.join(os.path.dirname(__file__), session_file)
+
+        username = args["arg1"]
+        name = args["arg2"]
+        email = args["arg3"]
+        credentials_file = args["arg4"]
+        credentials_file_path = os.path.join(
+            os.path.dirname(__file__), credentials_file
+        )
+
+        if not all([session_file, username, name, email, credentials_file]):
+            raise ValueError(
+                "All fields (session_file, username, name, email, credentials_file) are required."
+            )
+
+        try:
+            with open(session_file_path, "r") as f:
+                session_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid session file '{session_file}': {e}")
+
+        organization = session_data.get("org")
+        if not organization:
+            raise ValueError("Session file does not contain an organization.")
+
+        try:
+            with open(credentials_file_path, "r") as f:
+                credentials_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid credentials file '{credentials_file}': {e}")
+
+        public_key = credentials_data.get("public_key")
+        if not public_key:
+            raise ValueError("Invalid credentials file. Missing public_key.")
+
+        payload = {
+            "organization": organization,
+            "username": username,
+            "name": name,
+            "email": email,
+            "public_key": public_key,
+            "active": True,
+        }
+
+        url = f"http://{state['REP_ADDRESS']}/subject/create"
+        response = send_authed_message(payload, session_data, url, "POST")
+
+        shared_key = session_data.get("shared_key")
+        repsone_data = decrypt_message(response.json(), shared_key)
+
+        print(response.status_code)
+        
+        if response.status_code == 201:
+            print("Subject added successfully")
+        elif response.status_code == 403:
+            print(
+                "Error: Unauthorized. You lack the necessary permissions to add a subject."
+            )
+        else:
+            print("Error", response.json().get("error", "Unknown error"))
+
+    except ValueError as ve:
+        client.logger.error(f"ValueError: {ve}")
+        print(f"Error: {ve}")
+        return 1
+    except Exception as e:
+        client.logger.error(f"Error in rep_add_subject: {e}")
+        print(f"Error: {e}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    main()

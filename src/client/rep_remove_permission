@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from utils.utils import send_authed_message, decrypt_message
+
+import json
+import requests
+import client
+import os
+
+VALID_PERMISSIONS = {
+    "DOC_ACL",
+    "DOC_READ",
+    "DOC_NEW",
+    "DOC_DELETE",
+    "ROLE_ACL",
+    "ROLE_NEW",
+    "ROLE_DOWN",
+    "ROLE_UP",
+    "ROLE_MOD",
+    "SUBJECT_DOWN",
+    "SUBJECT_UP",
+    "SUBJECT_ NEW",
+}
+
+
+def main():
+    """
+    Implements the rep_remove_permission command to remove a permission from a role or dissociate a role from a username.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        role_name = args["arg1"]
+        target = args["arg2"]
+        
+        if role_name == "manager":
+            raise ValueError("Cannot remove permissions from the manager role.")
+
+        if not all([session_file, role_name, target]):
+            raise ValueError("Session_file, role_name, and target are required.")
+
+        session_file_path = os.path.join(os.path.dirname(__file__), session_file)
+        try:
+            with open(session_file_path, "r") as f:
+                session_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid session file '{session_file}': {e}")
+
+        organization = session_data.get("org")
+        session_id = session_data.get("session_id")
+        if not organization or not session_id:
+            raise ValueError(
+                "Session file must contain a valid organization and session ID."
+            )
+
+        is_permission = target in VALID_PERMISSIONS
+
+        shared_key = session_data.get("shared_key")
+        if is_permission:
+            payload = {
+                "organization": organization,
+                "role_name": role_name,
+                "permission": target,
+            }
+            url = f"http://{state['REP_ADDRESS']}/role/remove-permission"
+            response = send_authed_message(payload, session_data, url, "POST")
+            response_data = decrypt_message(response.json(), shared_key)
+
+        else:
+            payload = {
+                "organization": organization,
+                "username": target,
+                "role": role_name,
+            }
+            url = f"http://{state['REP_ADDRESS']}/subject/remove-role"
+            response = send_authed_message(payload, session_data, url, "POST")
+            response_data = decrypt_message(response.json(), shared_key)
+
+        if response.status_code == 200:
+            print(response_data["message"])
+        else:
+            print("Error:", response_data.get("error", "Unknown error"))
+
+    except ValueError as ve:
+        client.logger.error(f"ValueError: {ve}")
+        print(f"Error: {ve}")
+        return 1
+    except Exception as e:
+        client.logger.error(f"Error in rep_remove_permission: {e}")
+        print(f"Error: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

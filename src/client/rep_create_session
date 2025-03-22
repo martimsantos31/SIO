@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+import os
+import sys
+import base64
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+import client
+from utils.utils import (
+    load_private_key,
+    create_authed_message,
+    derive_shared_key,
+    load_public_key,
+    load_salt,
+)
+import requests
+import json
+
+args = client.parse_args()
+
+
+def main():
+    state, args = client.parse_args()
+
+    org = args["arg0"]
+    username = args["arg1"]
+    private_key_path = args["arg3"]
+    password = args.get("arg2")
+    session_file = args.get("arg4", "session.json")
+
+    rep_pub_key = state["REP_PUB_KEY"]
+
+    if not all([org, private_key_path]):
+        raise ValueError("Both organization and private key path are mandatory.")
+
+    salt = load_salt(private_key_path)
+    salt = base64.b64decode(salt)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend(),
+    )
+    password = password.encode()
+    key = kdf.derive(password)
+    key = int.from_bytes(key, "big")
+
+    private_key = ec.derive_private_key(key, ec.SECP256R1())
+
+    client_public_key = load_public_key(private_key_path)
+    payload = {
+        "username": username,
+        "organization": org,
+        "signature": None,
+        "public_key": client_public_key,
+    }
+    signature = create_authed_message(private_key, username)
+    payload["signature"] = signature
+
+    shared_key = derive_shared_key(private_key, rep_pub_key.encode())
+
+    try:
+        res = requests.post(
+            f"http://{state['REP_ADDRESS']}/session/create", json=payload
+        )
+
+        if res.status_code != 200:
+            raise ValueError(f"Invalid credentials")
+
+        response_data = res.json()
+        session_id = response_data["session_id"]
+        # Save session details
+        with open(session_file, "w") as f:
+            json.dump(
+                {
+                    "session_id": session_id,
+                    "shared_key": base64.b64encode(shared_key).decode(),
+                    "private_key": base64.b64encode(
+                        private_key.private_bytes(
+                            encoding=serialization.Encoding.PEM,
+                            format=serialization.PrivateFormat.PKCS8,
+                            encryption_algorithm=serialization.NoEncryption(),
+                        )
+                    ).decode(),
+                    "org": org,
+                    "username": username,
+                },
+                f,
+            )
+
+        state["sessions"][session_id] = {
+            "shared_key": base64.b64encode(shared_key).decode(),
+            "org": org,
+            "username": username,
+            "private_key": base64.b64encode(
+                private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            ).decode(),
+        }
+
+        client.save(state)
+
+        print(
+            f"Session created successfully:\n\tSession Id: {session_id}\n\tSession file: {session_file}\n\tUsername: {username}\n\tOrganization: {org}"
+        )
+
+        return 0
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    main()

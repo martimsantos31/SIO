@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import requests
+import client
+
+
+def main():
+    """
+    Implements the rep_suspend_subject command to suspend a subject in an organization.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        username = args["arg1"]
+
+        if not all([session_file, username]):
+            raise ValueError("Both session_file and username are required.")
+
+        # Load session file
+        try:
+            with open(session_file, "r") as f:
+                session_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid session file '{session_file}': {e}")
+
+        organization = session_data.get("org")
+        if not organization:
+            raise ValueError("Session file does not contain an organization.")
+
+        # Prepare request data
+        payload = {
+            "organization": organization,
+            "username": username,
+        }
+
+        # Send request to the server
+        headers = {"Session-ID": session_data.get("session_id", "")}
+        response = requests.post(
+            f"http://{state['REP_ADDRESS']}/subject/suspend",
+            json=payload,
+            headers=headers,
+        )
+
+        if response.status_code == 200:
+            print("Subject suspended successfully:", response.json()["subject"])
+        else:
+            print("Error:", response.json().get("error", "Unknown error"))
+
+    except ValueError as ve:
+        client.logger.error(f"ValueError: {ve}")
+        print(f"Error: {ve}")
+        return 1
+    except Exception as e:
+        client.logger.error(f"Error in rep_suspend_subject: {e}")
+        print(f"Error: {e}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+Flask
+Flask-RESTful
+flask-swagger-ui
+gunicorn
+python-dotenv
+sqlalchemy
+requests
+cryptography
+Flask-cors

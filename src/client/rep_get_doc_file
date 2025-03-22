@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import requests
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import client
+import base64
+from utils.utils import send_authed_message, send_encrypted_message, decrypt_message
+
+
+def decrypt_file(encrypted_content_base64, metadata):
+    """
+    Descriptografa o conteúdo do arquivo em Base64 usando AES-CBC.
+    """
+    try:
+        # Decodificar conteúdo Base64
+        encrypted_content = base64.b64decode(encrypted_content_base64)
+
+        # Extrair algoritmo e chave dos metadados
+        alg = metadata.get("alg")
+        key = base64.b64decode(metadata.get("key"))
+
+        if alg != "AES-CBC":
+            raise ValueError(f"Unsupported encryption algorithm: {alg}")
+
+        # Extrair IV e ciphertext
+        iv = encrypted_content[:16]
+        ciphertext = encrypted_content[16:]
+
+        # Configurar o Cipher para AES-CBC
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+
+        # Descriptografar o conteúdo
+        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+
+        # Remover padding PKCS7
+        pad_length = padded_plaintext[-1]
+        plaintext = padded_plaintext[:-pad_length]
+
+        return plaintext.decode("utf-8")
+    except Exception as e:
+        raise Exception(f"Error during decryption: {e}")
+
+
+def main():
+    """
+    Implements the rep_get_doc_file command to retrieve and decrypt a document file.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        document_name = args["arg1"]
+        output_file = args.get("arg2")  # Optional argument for the output file
+
+        if not all([session_file, document_name]):
+            raise ValueError("Both session_file and document_name are required.")
+
+        # Load session file
+        try:
+            with open(session_file, "r") as f:
+                session_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid session file '{session_file}': {e}")
+
+        session_id = session_data.get("session_id")
+        if not session_id:
+            raise ValueError("Session file does not contain a valid session_id.")
+
+        organization = session_data.get("org")
+        if not organization:
+            raise ValueError("Session file does not contain an organization.")
+
+        shared_key = session_data.get("shared_key")
+
+        payload = {
+            "organization": organization,
+            "document_name": document_name,
+        }
+
+        url = f"http://{state['REP_ADDRESS']}/doc/metadata"
+        response = send_authed_message(payload, session_data, url, "POST")
+
+        metadata_response = decrypt_message(response.json(), shared_key)
+
+        if metadata_response.get("error", None) != None:
+            print(
+                "There was an error retriving the documents: ",
+                metadata_response.get("error"),
+            )
+            return 1
+
+        print("Metadata response: ", metadata_response)
+        metadata = metadata_response
+
+        # Step 2: Retrieve file content
+        file_handle = metadata["public_metadata"]["file_handle"]
+
+        url = f"http://{state['REP_ADDRESS']}/doc/file/{file_handle}"
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            raise Exception(f"Failed to retrieve file: {response.text}")
+        data = response.json()
+
+        encrypted_file_content = data.get("file_content")
+
+        # Step 3: Decrypt file content
+        encryption_key = metadata["private_metadata"]["key"]
+        encryption_algorithm = metadata["private_metadata"]["alg"]
+
+        metadata = {"alg": encryption_algorithm, "key": encryption_key}
+
+        decrypted_content = decrypt_file(encrypted_file_content, metadata)
+
+        # Step 4: Write to stdout or to a file
+        if output_file:
+            with open(output_file, "wb") as f:
+                f.write(decrypted_content.encode("utf-8"))
+            print(f"Decrypted file saved to {output_file}")
+        else:
+            print(decrypted_content)
+
+    except ValueError as ve:
+        client.logger.error(f"ValueError: {ve}")
+        print(f"Error: {ve}")
+        return 1
+    except Exception as e:
+        client.logger.error(f"Error in rep_get_doc_file: {e}")
+        print(f"Error: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

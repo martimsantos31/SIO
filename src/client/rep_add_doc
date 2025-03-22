@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+import os
+import sys
+import hashlib
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from utils.utils import send_authed_message, decrypt_message
+
+import base64
+import datetime
+import json
+import os
+import uuid
+import client
+from cryptography.hazmat.primitives.ciphers import Cipher, modes, algorithms
+from cryptography.hazmat.backends import default_backend
+
+
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import os
+import base64
+
+
+def encrypt_file(file_path):
+    """
+    Encripta o conteúdo do arquivo usando AES-CBC com padding PKCS7.
+    Retorna a chave, o algoritmo e o conteúdo encriptado (IV + ciphertext).
+    """
+    try:
+        key = os.urandom(32)
+        iv = os.urandom(16)
+
+        with open(file_path, "rb") as f:
+            plaintext = f.read()
+
+        padder = padding.PKCS7(algorithms.AES.block_size).padder()
+        padded_plaintext = padder.update(plaintext) + padder.finalize()
+
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+
+        ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
+
+        encrypted_content = iv + ciphertext
+
+        # Retornar dados
+        return (
+            base64.b64encode(key).decode("utf-8"),
+            "AES-CBC",
+            encrypted_content,
+        )
+
+    except Exception as e:
+        raise Exception(f"Error during encryption: {e}")
+
+
+def calculate_file_digest(file_path):
+    try:
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    except Exception as e:
+        raise Exception(f"Error calculating file digest: {e}")
+
+
+def main():
+    try:
+        state, args = client.parse_args()
+
+        session_file_path = args.get("arg0")
+        document_name = args.get("arg1")
+        file_path = args.get("arg2")
+
+        if not all([session_file_path, document_name, file_path]):
+            raise ValueError(
+                "All fields (session_file_path, document_name, file_path) are required."
+            )
+
+        with open(session_file_path, "r") as f:
+            session = json.load(f)
+
+        if not session:
+            raise ValueError("Session not found.")
+
+        organization = session.get("org")
+        if not organization:
+            raise ValueError("Organization not found.")
+
+        document_id = str(uuid.uuid4())
+        file_handle = calculate_file_digest(file_path)
+
+        key, alg, ciphertext = encrypt_file(file_path)
+
+        file_content = base64.b64encode(ciphertext).decode("utf-8")
+
+        document = {
+            "public-metadata": {
+                "document_handle": document_id,
+                "document_name": document_name,
+                "create_date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                "creator": session.get("username"),
+                "file_handle": file_handle,
+                "deleter": "none",
+                "acl":[
+                    {
+                        "name": "manager",
+                        "permissions": ["DOC_READ", "DOC_ACL", "DOC_DELETE"]
+                    }
+                    
+                ]
+            },
+            "private-metadata": {"alg": alg, "key": key},
+            "session_file": {
+                "org": session.get("org"),
+                "session_id": session.get("session_id"),
+            },
+        }
+
+        file_data = {"file_handle": file_handle, "file_content": file_content}
+
+        url = f"http://{state['REP_ADDRESS']}/org/{organization}/add_doc"
+        response = send_authed_message(document, session, url, "POST")
+
+        shared_key = session.get("shared_key")
+        response1 = decrypt_message(response.json(), shared_key)
+
+        if response.status_code != 200:
+            print(f"Response:{response1}")
+
+        if response.status_code == 200:
+            url = f"http://{state['REP_ADDRESS']}/doc/add"
+            response = send_authed_message(file_data, session, url, "POST")
+
+            response1 = decrypt_message(response.json(), shared_key)
+
+            if response.status_code != 200:
+                url = f"http://{state['REP_ADDRESS']}/org/{organization}/del_doc/{document_name}"
+                response = send_authed_message(file_data, session, url, "DELETE")
+
+            print(f"Response:{response1}")
+
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

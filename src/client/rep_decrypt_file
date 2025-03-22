@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+
+import base64
+import json
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import client
+
+
+def decrypt_file(encrypted_content_base64, metadata):
+    """
+    Descriptografa o conteúdo do arquivo em Base64 usando AES-CBC.
+    """
+    try:
+        # Decodificar conteúdo Base64
+        encrypted_content = base64.b64decode(encrypted_content_base64)
+        
+        if not encrypted_content:
+            raise ValueError("Encrypted content is empty or invalid.")
+
+        # Extrair algoritmo e chave dos metadados privados
+        private_metadata = metadata.get("private_metadata", {})
+        alg = private_metadata.get("alg")
+        key_base64 = private_metadata.get("key")
+
+        if not alg:
+            raise ValueError("Missing 'alg' in metadata.")
+        
+        if not key_base64:
+            raise ValueError("Missing 'key' in metadata.")
+        
+        key = base64.b64decode(key_base64)
+
+        if alg != "AES-CBC":
+            raise ValueError(f"Unsupported encryption algorithm: {alg}")
+
+        # Extrair IV e ciphertext
+        iv = encrypted_content[:16]
+        ciphertext = encrypted_content[16:]
+
+        # Configurar o Cipher para AES-CBC
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+
+        # Descriptografar o conteúdo
+        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+
+        # Remover padding PKCS7
+        pad_length = padded_plaintext[-1]
+        plaintext = padded_plaintext[:-pad_length]
+
+        return plaintext.decode("utf-8")
+    except Exception as e:
+        raise Exception(f"Error during decryption: {e}")
+
+
+def main():
+    """
+    Função principal para executar o comando rep_decrypt_file.
+    """
+    try:
+        state, args = client.parse_args()
+
+        encrypted_file_path = args["arg0"]
+        metadata_path = args["arg1"]
+
+        with open(encrypted_file_path, "rb") as f:
+            encrypted_content = f.read()
+
+        encrypted_content_base64 = base64.b64encode(encrypted_content).decode("utf-8")
+        
+        if not encrypted_content:
+            raise ValueError(f"The file '{encrypted_file_path}' is empty or unreadable.")
+
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+
+        decrypted_content = decrypt_file(encrypted_content_base64, metadata)
+
+        print("Decrypted File Content:")
+        print(decrypted_content)
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

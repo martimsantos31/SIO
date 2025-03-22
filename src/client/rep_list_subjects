@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import client
+from utils.utils import send_authed_message, send_encrypted_message, decrypt_message
+
+
+def main():
+    """
+    Main function to execute the rep_list_subjects command.
+    """
+    try:
+        # Parse the state and arguments
+        state, args = client.parse_args()
+
+        # Extract arguments
+        session_file = args["arg0"]
+        username = args["arg1"]
+
+        # Validate required arguments
+        if not session_file:
+            raise ValueError("Session file is required.")
+
+        # Load session details from the session file
+        with open(session_file, "r") as f:
+            session_data = json.load(f)
+
+        # Extract organization name
+        organization = session_data.get("org")
+        session_id = session_data.get("session_id")
+        shared_key = session_data.get("shared_key")
+        if not organization:
+            raise ValueError("Organization name is missing in the session file.")
+
+        # Prepare query parameters
+        payload = {"organization": organization}
+        if username:
+            payload["username"] = username
+        else:
+            payload["username"] = ""
+
+        # Make the API call
+        url = f"http://{state['REP_ADDRESS']}/org/subjects"
+        response = send_authed_message(payload, session_data, url, "GET")
+
+        subjects = decrypt_message(response.json(), shared_key)
+        if subjects.get("error", None) != None:
+            print("There was an error retriving the documents: ", subjects.get("error"))
+            return 0
+
+        subjects = subjects.get("subjects", [])
+        print(f"Subjects in org'{organization}':")
+        if not subjects:
+            print("No subjects found.")
+        for subject in subjects:
+            print(f"- {subject}")
+
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

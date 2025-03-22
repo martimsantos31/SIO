@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import requests
+import client
+from utils.utils import send_authed_message, decrypt_message
+
+
+def rep_get_doc_metadata(
+    session_file, document_name, state, output_file="./metadata.json"
+):
+    """
+    Retrieves metadata for a specific document and saves it to a file.
+
+    Args:
+        session_file (str): Path to the session file.
+        document_name (str): Name of the document to retrieve metadata for.
+        output_file (str): Path to save the metadata JSON file. Default is 'metadata.json'.
+    """
+    try:
+        state, args = client.parse_args()
+        # Load session details from the session file
+        with open(session_file, "r") as f:
+            session_data = json.load(f)
+
+        organization_name = session_data.get("org")
+        if not organization_name:
+            raise ValueError("The organization name is missing in the session file.")
+
+        url = f"http://{state['REP_ADDRESS']}/doc/metadata"
+        payload = {
+            "organization": organization_name,
+            "document_name": document_name,
+        }
+        session_id = session_data["session_id"]
+        shared_key = session_data.get("shared_key")
+        salt = session_data.get("salt")
+        response = send_authed_message(
+            payload, session_data, url, "POST"
+        )
+
+        # Handle the response
+        metadata_response = decrypt_message(response.json(), shared_key, salt)
+
+        if metadata_response.get("error", None) != None:
+            print(
+                "There was an error retriving the documents: ",
+                metadata_response.get("error"),
+            )
+            return 1
+
+        print("Metadata response: ", metadata_response)
+
+        # Save metadata to a file
+        print(f"Saving metadata to {output_file}")
+        with open(output_file, "w", encoding="utf-8") as outfile:
+            json.dump(metadata_response, outfile, indent=4)
+        print(f"Metadata saved to {output_file}")
+
+    except Exception as e:
+        client.logger.error(f"Error in rep_get_doc_metadata: {e}")
+        print(f"Error: {e}")
+
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    # Parse command-line arguments
+    state, args = client.parse_args()
+
+    # Validate required arguments
+    if not args.get("arg0") or not args.get("arg1"):
+        print(
+            "Usage: python rep_get_doc_metadata.py <session_file> <document_name> [output_file]"
+        )
+        exit(1)
+
+    # Extract arguments
+    session_file = args["arg0"]
+    document_name = args["arg1"]
+    output_file = args.get("arg2", "./metadata.json")  # Default output file
+
+    if output_file is None:
+        output_file = "./metadata.json"
+
+    # Execute the function
+    rep_get_doc_metadata(session_file, document_name, state, output_file)

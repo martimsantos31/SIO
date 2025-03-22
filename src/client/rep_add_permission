@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from utils.utils import send_authed_message, decrypt_message
+
+import json
+import requests
+import client
+import os
+
+VALID_PERMISSIONS = {
+    "DOC_ACL",
+    "DOC_READ",
+    "DOC_NEW",
+    "DOC_DELETE",
+    "ROLE_ACL",
+    "ROLE_NEW",
+    "ROLE_DOWN",
+    "ROLE_UP",
+    "ROLE_MOD",
+    "SUBJECT_DOWN",
+    "SUBJECT_UP",
+    "SUBJECT_ NEW",
+}
+
+
+def main():
+    """
+    Implements the rep_add_permission command to assign a role to a subject or add a permission to a role.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        role_name = args["arg1"]
+        target = args["arg2"]
+
+        if not all([session_file, role_name, target]):
+            raise ValueError("Session file, role name, and target are required.")
+
+        is_permission = target in VALID_PERMISSIONS
+
+        # Load session file
+        session_file_path = os.path.join(os.path.dirname(__file__), session_file)
+        with open(session_file_path, "r") as f:
+            session_data = json.load(f)
+
+        organization = session_data.get("org")
+        session_id = session_data.get("session_id")
+
+        if not organization or not session_id:
+            raise ValueError(
+                "Session file must contain a valid organization and session ID."
+            )
+
+        if is_permission:
+            # Adding a permission to a role
+            payload = {
+                "organization": organization,
+                "role_name": role_name,
+                "permission": target,
+            }
+            url = f"http://{state['REP_ADDRESS']}/role/add-permission"
+            response = send_authed_message(payload, session_data, url, "POST")
+
+            shared_key = session_data.get("shared_key")
+            response_data = decrypt_message(response.json(), shared_key)
+            print(f"Response data: {response_data}")
+        else:
+            # Assigning a role to a subject
+            payload = {
+                "organization": organization,
+                "username": target,
+                "role": role_name,
+            }
+            url = f"http://{state['REP_ADDRESS']}/subject/add-role"
+            response = send_authed_message(payload, session_data, url, "POST")
+
+            shared_key = session_data.get("shared_key")
+            response_data = decrypt_message(response.json(), shared_key)
+
+        if response.status_code == 200:
+            print(f"Successfully updated role '{role_name}' with target '{target}'.")
+        else:
+            print("Error1:", response_data.get("error", "Unknown error"))
+
+    except ValueError as ve:
+        print(f"Error: {ve}")
+        return 1
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

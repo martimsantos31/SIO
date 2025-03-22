@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import requests
+import client
+
+
+def main():
+    """
+    Função principal para executar o comando rep_create_org.
+    """
+    try:
+        state, args = client.parse_args()
+
+        org = args["arg0"]
+        username = args["arg1"]
+        name = args["arg2"]
+        email = args["arg3"]
+        public_key_path = args["arg4"]
+
+        if not all([org, username, name, email, public_key_path]):
+            raise ValueError(
+                "Todos os campos (org, username, name, email) são obrigatórios."
+            )
+
+        with open(public_key_path, "r") as f:
+            data = json.load(f)
+
+            public_key = data["public_key"]
+
+        args = {
+            "org": org,
+            "username": username,
+            "name": name,
+            "email": email,
+            "public_key": public_key,
+        }
+
+
+        res = requests.post(f"http://{state['REP_ADDRESS']}/org/", json=args)
+    except Exception as e:
+        client.logger.error(f"Erro no main: {e}")
+
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

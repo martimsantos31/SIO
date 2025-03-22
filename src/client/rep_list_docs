@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import requests
+import json
+import client
+from utils.utils import send_encrypted_message, decrypt_message
+
+
+def main():
+    """
+    Command to list documents of an organization based on the session file.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file_path = args["arg0"]
+        username = args.get("username")
+        date = args.get("date")
+
+        if username:
+            username = username.strip()
+
+        if not session_file_path:
+            raise ValueError("The field session_file_path is required.")
+
+        with open(session_file_path, "r") as f:
+            session_data = json.load(f)
+
+        session_id = session_data.get("session_id")
+        organization = session_data.get("org")
+        shared_key = session_data.get("shared_key")
+        salt = session_data.get("salt")
+        if not organization or not session_id:
+            raise ValueError("Organization or session_id not found in session file.")
+
+        url = f"http://{state['REP_ADDRESS']}/org/{organization}"
+        response = send_encrypted_message(
+            None, session_id, shared_key, salt, url, "GET"
+        )
+
+        documents = decrypt_message(response.json(), shared_key, salt)
+
+        if documents.get("error", None) is not None:
+            print(
+                "There was an error retrieving the documents: ",
+                documents.get("error"),
+            )
+            return 1
+
+        documents = documents["documents"]
+        _documents = documents
+
+        if username:
+            _documents = [
+                doc
+                for doc in documents
+                if doc.get("public-metadata", {}).get("creator") == username
+            ]
+        if date:
+            _documents = [
+                doc
+                for doc in documents
+                if doc.get("public-metadata", {}).get("create_date") == date
+            ]
+
+        if username:
+            print(f"Filtering by Creator: {username}")
+        if date:
+            print(f"Filtering by Date: {date}")
+
+        if _documents:
+            print("Documents:")
+            for doc in _documents:
+                public_metadata = doc.get("public-metadata", {})
+                output = {
+                    "document_handle": public_metadata.get("document_handle"),
+                    "document_name": public_metadata.get("document_name"),
+                    "create_date": public_metadata.get("create_date"),
+                    "creator": public_metadata.get("creator"),
+                }
+                print(json.dumps(output, indent=4))
+        else:
+            print("No documents found.")
+
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+    return 0
+
+
+
+if __name__ == "__main__":
+    main()

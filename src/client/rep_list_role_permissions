@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import json
+import client
+import os
+from utils.utils import send_authed_message, send_encrypted_message, decrypt_message
+
+
+def main():
+    """
+    Implements the rep_list_role_permissions command to retrieve permissions of a given role.
+    """
+    try:
+        state, args = client.parse_args()
+
+        session_file = args["arg0"]
+        role_name = args["arg1"]
+
+        if not all([session_file, role_name]):
+            raise ValueError("Session_file and role_name are required.")
+
+        session_file_path = os.path.join(os.path.dirname(__file__), session_file)
+        try:
+            with open(session_file_path, "r") as f:
+                session_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid session file '{session_file}': {e}")
+
+        organization = session_data.get("org")
+        session_id = session_data.get("session_id")
+        shared_key = session_data.get("shared_key")
+
+        if not organization or not session_id:
+            raise ValueError(
+                "Session file must contain a valid organization and session ID."
+            )
+
+        payload = {"organization": organization, "role": role_name}
+
+        url = f"http://{state['REP_ADDRESS']}/role/permissions"
+        response = send_authed_message(payload, session_data, url, "GET")
+
+        permissions = decrypt_message(response.json(), shared_key)
+        if permissions.get("error", None) != None:
+            print(
+                "There was an error retriving the documents: ", permissions.get("error")
+            )
+            return 0
+
+        permissions = permissions.get("permissions", [])
+        if not permissions:
+            print("No permissions.")
+            return 1
+        print(f"Permissions of role '{role_name}':")
+        for permission in permissions:
+            print(f"- {permission}")
+
+    except Exception as e:
+        client.logger.error(f"Error in rep_list_role_permissions: {e}")
+        print(f"Error: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

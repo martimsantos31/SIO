@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+import os
+import sys
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+
+import requests
+import base64
+import client
+
+
+def main():
+    """
+    Main function to execute the rep_get_file command.
+    """
+    try:
+        state, args = client.parse_args()
+
+        file_handle = args["arg0"]
+        file_path = args.get("arg1")
+
+        if not file_handle:
+            raise ValueError("The 'file_handle' argument is required.")
+
+        url = f"http://{state['REP_ADDRESS']}/doc/file/{file_handle}"
+
+        print("Requesting file from server...")
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            raise Exception(f"Failed to retrieve file: {response.text}")
+
+        data = response.json()
+        file_content = data.get("file_content")
+
+        if file_content is None:
+            raise Exception("No file content found in response.")
+
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(file_content)
+                print(f"File saved successfully to {file_path}")
+            except Exception as e:
+                raise Exception(f"Failed to save file: {e}")
+        else:
+            print(f"File content:\n{file_content}")
+
+    except Exception as e:
+        client.logger.error(f"Error in main: {e}")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()

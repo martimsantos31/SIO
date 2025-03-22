@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+#!/usr/bin/env python3
+import json
+import requests
+import client
+from utils.utils import send_authed_message, send_encrypted_message, decrypt_message
+
+
+def main():
+    try:
+        state, args = client.parse_args()
+
+        session_file_path = args.get("arg0")
+        document_name = args.get("arg1")
+        action = args.get("arg2")
+        role = args.get("arg3")
+        permission = args.get("arg4")
+
+        if not session_file_path:
+            raise ValueError("The field session_file_path is required.")
+
+        with open(session_file_path, "r") as f:
+            session_data = json.load(f)
+
+        if not session_data:
+            raise ValueError("Session file is empty.")
+
+        organization = session_data.get("org")
+        session_id = session_data.get("session_id")
+        shared_key = session_data.get("shared_key")
+        if not organization:
+            raise ValueError("Organization not found in session file.")
+
+        if not state or "REP_ADDRESS" not in state:
+            raise ValueError("REP_ADDRESS is missing in state.")
+
+        url = f"http://{state['REP_ADDRESS']}/doc/update/acl"
+
+        payload = {
+            "organization": organization,
+            "document": document_name,
+            "role": role,
+            "permission": permission,
+            "action": action,
+            "session_id": session_data.get("session_id"),
+        }
+
+        response = send_authed_message(payload, session_data, url, "PUT")
+
+        response = decrypt_message(response.json(), shared_key)
+        if response.get("error", None) != None:
+            print("There was an error: ", response.get("error"))
+            return 0
+        else:
+            print(response.get("message"))
+            return 1
+
+    except Exception as e:
+        print("Unhandled Exception:", e)
+
+
+if __name__ == "__main__":
+    main()
